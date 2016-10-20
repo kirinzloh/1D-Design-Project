@@ -1,0 +1,35 @@
+module boolean_mod (
+    //inputs
+    input alufn[6],
+    input a[8],
+    input b[8],
+    
+    //outputs
+    output boole_output[8]
+  ) {
+
+  always {
+    case(alufn[3:0]){
+    b1000:
+      boole_output[7:0] = a[7:0] & b[7:0]; //AND operator
+    b1110:
+      boole_output[7:0] = a[7:0] | b[7:0]; //OR operator
+    b0110:
+      boole_output[7:0] = a[7:0] ^ b[7:0]; //XOR operator
+    b1010:
+      boole_output[7:0] = a[7:0]; //"A" operator
+    b0101:
+      boole_output[7:0] = ~a[7:0]; // NOT "A" operator
+    b0011:
+      boole_output[7:0] = ~b[7:0]; // NOT "B" operator
+    b0001:
+      boole_output[7:0] = ~(a[7:0] | b[7:0]); //NOR operator
+    b0111:
+      boole_output[7:0] = ~(a[7:0] & b[7:0]); //NAND operator
+    b1001:
+      boole_output[7:0] = ~(a[7:0] & b[7:0]) | (a[7:0] & b[7:0]); //XNOR operator    
+    default:
+      boole_output[7:0] = a[7:0];
+    }
+  }
+}
