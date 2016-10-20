@@ -1,0 +1,24 @@
+module shifter_mod (
+    //inputs
+    input alufn[6],
+    input a[8],  
+    input b[8],
+    
+    //outputs
+    output shift_output[8]
+  ) {
+
+  always {
+    case(alufn[1:0]){
+    b00:
+    shift_output = a << b[2:0]; //shift left SHL
+    b01:
+    shift_output = a >> b[2:0]; //shift right SHR
+    b11:
+    shift_output = $signed(a)>>>b[2:0]; // shift right with sign extension SRA  
+    default:
+    shift_output = a;
+        
+  }
+}
+}
