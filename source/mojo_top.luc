@@ -1,0 +1,626 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,       // AVR RX buffer full
+    output io_led [3][8],   // LEDs on IO Shield
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button [5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+  ) {
+  
+  sig rst;                  // reset signal
+
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+  
+    .rst(rst) {
+      
+      multi_seven_seg seg;
+      
+      dff counter[35]; //counter used to cycle through different states      
+      
+      //defining state machine states
+      fsm state = {IDLE, NORMAL_ADDITION, ADDITION_OVERFLOW, NORMAL_SUBTRACTION, SUBTRACTION_OVERFLOW, ZERO_SIGNAL, ADDER_ERROR_TEST,
+      ADDER_ERROR, BOOLEAN_AND, BOOLEAN_OR, BOOLEAN_XOR, BOOLEAN_A, BOOLEAN_ERROR_TEST, BOOLEAN_ERROR, COMPARE_CMPEQT, COMPARE_CMPEQF,
+      COMPARE_CMPLTT, COMPARE_CMPLTF, COMPARE_CMPLTETE, COMPARE_CMPLTETL, COMPARE_CMPLEF, COMPARE_ERROR_TEST, COMPARE_ERROR,
+      SHIFT_LEFT,SHIFT_RIGHT,ARITHMETIC_SHIFT_RIGHT,SHIFT_ERROR_TEST, SHIFT_ERROR, NORMAL_MULTIPLICATION, NEGATIVE_MULTIPLICATION,
+      MULTIPLICATION_ERROR_TEST, MULTIPLICATION_ERROR, MODULO, MODULO_ERROR, END};
+    }
+  }
+  
+  sig alufn[6]; //6-bit input alufn
+  sig a[8]; //8-bit input a 
+  sig b[8]; //8-bit input b
+  sig alu_output[8]; //8-bit output of alu
+  const DELAY = 28;//constant used to control time before transitioning to next state (increase value to increase delay between states)
+  
+  alu_mod alu; //instantiating alu
+  
+  
+  always {
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+    
+    led [6:1] = 6h00; //turning off LEDs[6:1] on mojo board
+    led[7] = alu.v; //connecting addition overflow signal to led[7]
+    led[0] = alu.sub_overflow;  // connecting subtraction overflow signal to led[0]
+    io_seg = ~seg.seg;          // connect segments to the driver
+    io_sel = ~seg.sel;           // connect digits to the driver
+    seg.values = {13,13,13,13};
+    
+    a = io_dip[0]; //right io_dip switch controls input a
+    b = io_dip[1]; //middle dip switch controls input b
+    alufn = io_dip[2][5:0]; // first 6-bits of left dip switch controls input alufn
+    
+    // assigning inputs and output of alu    
+    alu.alufn = alufn; // alufn input to alu module
+    alu.a = a; //a input to alu module
+    alu.b = b; //b input to alu module
+    alu_output = alu.alu_output; //alu module output
+    
+    io_led[0] = io_dip[0]; // left leds show input a (8bits)
+    io_led[1] = io_dip[1]; // middle leds show input b (8bits)
+    io_led[2] = alu_output; // right leds show alu_output (8bits)
+    
+    //TEST CASES
+    case (state.q){
+      state.IDLE: //Start state before initiating test
+      counter.d = 0; //clk counter 0 while IDLE
+        if(io_button[1] == 1){
+          state.d = state.NORMAL_ADDITION; //transits to the first test state (start testing)
+        }
+          
+      state.NORMAL_ADDITION: // ADDER Test case 1(ADDITION): 4+6 = 10
+      alu.alufn = 6b0; //selects operation of ALU
+      alu.a = 8b100; //input a = 4
+      alu.b = 8b110; //input b = 6
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b100; //display input a on left 8 LEDs
+      io_led[1] = 8b110; //display input b on centre 8 LEDs
+      seg.values = {b1101,b1101,b1101,b1010}; //display A to show test case currently on Adder module
+      counter.d = counter.q+1; //continually increases clock counter until delay time is over
+        if (counter.q[DELAY] == 1 && alu_output == 8b1010 && io_button[4] == 1){ //if designated time and correct answer
+          counter.d = 0; //reset counter
+          state.d = state.ADDITION_OVERFLOW; //transit to next case
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1010 && io_button[4] == 1 ){ //if designated and incorrect answer
+          counter.d=0; //reset counter
+          state.d=state.ADDER_ERROR;  //transit to error case
+          } 
+    
+        
+      state.ADDITION_OVERFLOW: // ADDER Test case 2(ADDITON OVERFLOW): 64+64=128 (overflow) 8b10000000
+      alu.alufn = 6b0; 
+      alu.a = 8b01000000;
+      alu.b = 8b01000000;
+      alu_output = alu.alu_output;
+      io_led[0] = 8b01000000;
+      io_led[1] = 8b01000000;
+      seg.values = {b1101,b1101,b1101,b1010};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b10000000 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.NORMAL_SUBTRACTION;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b10000000 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.ADDER_ERROR;
+          }
+          
+      state.NORMAL_SUBTRACTION: //ADDER Test case 3(SUBTRACTION): 16-8 = 8 
+      alu.alufn = 6b1; 
+      alu.a = 8b00010000; // 16
+      alu.b = 8b00001000; // 8
+      alu_output = alu.alu_output;    
+      io_led[0] = 8b00010000;
+      io_led[1] = 8b00001000;
+      seg.values = {b1101,b1101,b1101,b1010};  
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b00001000 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.SUBTRACTION_OVERFLOW;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b00001000 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.ADDER_ERROR;
+          }
+          
+      state.SUBTRACTION_OVERFLOW://ADDER Test case 4(SUB): -65-64 = -129 (overflow) 8b10000000
+      alu.alufn = 6b1; 
+      alu.a = 8b10111111; // -65
+      alu.b = 8b01000000; // 64
+      alu_output = alu.alu_output;   
+      io_led[0] = 8b10111111;
+      io_led[1] = 8b01000000; 
+      seg.values = {b1101,b1101,b1101,b1010};  
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b01111111 && io_button[4] == 1){ // -128
+          counter.d = 0;
+          state.d = state.ZERO_SIGNAL;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b01111111 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.ADDER_ERROR;}
+
+      state.ZERO_SIGNAL://ADDER Test case 5(ADD): 0 + 0 = 0
+      alu.a = 8b00000000; // 0
+      alu.b = 8b00000000; // 0
+      alu_output = alu.alu_output;   
+      io_led[0] = 8b00000000;
+      io_led[1] = 8b00000000; 
+      seg.values = {b1101,b1101,b1101,b1010};  
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] ==1 && alu_output == 8b00000000 && io_button[4] == 1){ // -128
+          counter.d = 0;
+          state.d = state.ADDER_ERROR_TEST;
+        }
+        else if (counter.q[DELAY] == 1 && alu_output!= 8b00000000 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.ADDER_ERROR;
+        }
+        
+      state.ADDER_ERROR_TEST://Simulated ADDER error test case: 4+6 = 10 (+1)
+      alu.alufn = 6b0; 
+      alu.a = 8b100; // 4
+      alu.b = 8b110; // 6
+      alu_output = alu.alu_output + 1; //adding 1 to output of adder to create incorrect result
+      io_led[0] = 8b100;
+      io_led[1] = 8b110;     
+      seg.values = {b1101,b1101,b1101,b1010}; 
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1010 && io_button[4] == 1){ //if result is correct, move on to next test case
+          counter.d = 0;
+          state.d = state.BOOLEAN_AND;}
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1010 && io_button[4] == 1){ //else move to adder error state
+          counter.d=0;
+          state.d=state.ADDER_ERROR;}
+      
+      state.ADDER_ERROR: //ADDER ERROR
+      seg.values = {b1100,b1110,b1110,b1010}; //Displays ErrA to show error in adder module
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && io_button[4] == 1){ 
+          counter.d = 0;
+          state.d = state.BOOLEAN_AND;} 
+      
+      state.BOOLEAN_AND: //BOOLEAN Test case 1(AND): 8b10010011 && 8b11100010 = 8b10000010
+      alu.alufn = 6b11000; 
+      alu.a = 8b10010011;
+      alu.b = 8b11100010;
+      alu_output = alu.alu_output;
+      io_led[0] = 8b10010011; 
+      io_led[1] = 8b11100010;
+      seg.values = {b1101,b1101,b1101,b1000};   
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b10000010 && io_button[4] == 1) {
+          counter.d = 0;
+          state.d = state.BOOLEAN_OR;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b10000010 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.BOOLEAN_ERROR;
+          }
+        
+      state.BOOLEAN_OR: //BOOLEAN Test case 2(OR): 8b10010011 || 8b11100010 = 8b11110011
+      alu.alufn = 6b11110; 
+      alu.a = 8b10010011;
+      alu.b = 8b11100010;
+      alu_output = alu.alu_output;
+      io_led[0] = 8b10010011; 
+      io_led[1] = 8b11100010;
+      seg.values = {b1101,b1101,b1101,b1000};             
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b11110011 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.BOOLEAN_XOR;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b11110011 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.BOOLEAN_ERROR;
+          }
+        
+      state.BOOLEAN_XOR: //BOOLEAN Test case 3(XOR): 8b10010011 ^ 8b11100010 = 8b01110001
+      alu.alufn = 6b10110; 
+      alu.a = 8b10010011;
+      alu.b = 8b11100010;
+      alu_output = alu.alu_output;
+      io_led[0] = 8b10010011; 
+      io_led[1] = 8b11100010;
+      seg.values = {b1101,b1101,b1101,b1000};         
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b01110001 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.BOOLEAN_A;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b01110001 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.BOOLEAN_ERROR;
+          }
+        
+     state.BOOLEAN_A: //BOOLEAN Test case 4("A"): 8b10010011 = 8b10010011
+      alu.alufn = 6b11010; 
+      alu.a = 8b10010011;
+      alu.b = 8b11100010;
+      alu_output = alu.alu_output;
+      io_led[0] = 8b10010011; 
+      io_led[1] = 8b11100010;
+      seg.values = {b1101,b1101,b1101,b1000};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b10010011 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.SHIFT_LEFT;
+        }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b10010011 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.BOOLEAN_ERROR;
+        }
+        
+      state.BOOLEAN_ERROR_TEST: //Simulated BOOLEAN error test case: 8b10010011 && 8b0 = 8b0 (+1)
+      alu.alufn = 6b11000; 
+      alu.a = 8b10010011;
+      alu.b = 8b00000000;
+      alu_output = alu.alu_output + 1; 
+      io_led[0] = 8b10010011; 
+      io_led[1] = 8b0; 
+      seg.values = {b1101,b1101,b1101,b1000};              
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b0 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.SHIFT_LEFT;
+        }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b0 && io_button[4] == 1){
+          counter.d=0;
+          state.d = state.BOOLEAN_ERROR;
+        }
+                
+      state.BOOLEAN_ERROR: //BOOLEAN ERROR
+      seg.values = {b1100,b1110,b1110,b1000};  
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.SHIFT_LEFT;}      
+          
+        
+      state.SHIFT_LEFT: //SHIFTER Test case 1(SHIFT LEFT): 8b1111 << 4 = 8b11110000
+      alu.alufn = 6b100000; 
+      alu.a = 8b1111;
+      alu.b = 8b100;  // 4
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b1111;
+      io_led[1] = 8b100; 
+      seg.values = {b1101,b1101,b1101,b0101};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b11110000 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.SHIFT_RIGHT;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b11110000 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.SHIFT_ERROR;
+          }
+          
+      state.SHIFT_RIGHT: //SHIFTER Test case 2(SHIFT RIGHT): 8b10110000 >> 2 = 8b101100
+      alu.alufn = 6b100001; 
+      alu.a = 8b11110000;
+      alu.b = 8b10; // 2 
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b11110000;
+      io_led[1] = 8b10; 
+      seg.values = {b1101,b1101,b1101,b0101};             
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b00111100 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.ARITHMETIC_SHIFT_RIGHT;
+          }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b00111100 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.SHIFT_ERROR;
+          }
+        
+      state.ARITHMETIC_SHIFT_RIGHT: //SHIFTER Test case 3(ARITHMETIC RIGHT SHIFT): 8b10110000 >>> 2 = 8b11101100
+      alu.alufn = 6b100011; 
+      alu.a = 8b10110000;
+      alu.b = 8b10; // 2
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10110000;
+      io_led[1] = 8b10; 
+      seg.values = {b1101,b1101,b1101,b0101};             
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b11101100 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.SHIFT_ERROR_TEST;
+          }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b11101100 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.SHIFT_ERROR;
+          }
+          
+      state.SHIFT_ERROR_TEST: //SHIFTER error test case : 8b01101000 >>> 2 = 8b00011010 (+1)
+      alu.alufn = 6b100001; 
+      alu.a = 8b01101000;
+      alu.b = 8b10;
+      alu_output = alu.alu_output+1; 
+      io_led[0] = 8b01101000;
+      io_led[1] = 8b10; 
+      seg.values = {b1101,b1101,b1101,b0101};             
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b00011010 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPEQT;
+          }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b00011010 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.SHIFT_ERROR;
+          }
+                        
+      state.SHIFT_ERROR: //SHIFTER ERROR
+      seg.values = {b1100,b1110,b1110,b0101}; 
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPEQT;}
+      
+      state.COMPARE_CMPEQT: //COMPARE Test case 1(CMPEQT): 8b10010011 == 8b10010011, result = 8b1 (True)
+      alu.alufn = 6b110011; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010011;
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010011; 
+      seg.values = {b1101,b1101,b1101,b1011};             
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPEQF;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        }  
+        
+      state.COMPARE_CMPEQF: //COMPARE Test case 2(CMPEQF):  8b10010011 == 8b10010010, result = 8b0 (False)
+      alu.alufn = 6b110011; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010010;
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010010; 
+      seg.values = {b1101,b1101,b1101,b1011};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b0 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPLTT;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b0 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        }             
+        
+      state.COMPARE_CMPLTT: //COMPARE Test case 3(CMPLTT): 8b10010011 == 8b10010111, result = 8b1 (True)
+      alu.alufn = 6b110101; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010111;
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010111; 
+      seg.values = {b1101,b1101,b1101,b1011};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPLTF;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        }                      
+            
+      state.COMPARE_CMPLTF: //COMPARE Test case 4(CMPLTF): 8b10010011 == 8b10010010, result = 8b0 (False)
+      alu.alufn = 6b110101; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010010;
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010010; 
+      seg.values = {b1101,b1101,b1101,b1011};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b0 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPLTETE;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b0 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        }                                                       
+        
+      state.COMPARE_CMPLTETE: //COMPARE Test case 5(CMPLETE): 8b10010011 == 8b10010011, result = 8b1 (True)
+      alu.alufn = 6b110111; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010011;
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010011; 
+      seg.values = {b1101,b1101,b1101,b1011};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPLTETL;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        }                     
+        
+      state.COMPARE_CMPLTETL: //COMPARE Test case 6(CMPLTETL): 8b10010011 == 8b10010111, result = 8b1 (True)
+      alu.alufn = 6b110111; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010111;
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010111; 
+      seg.values = {b1101,b1101,b1101,b1011};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_CMPLEF;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        }         
+        
+        
+      state.COMPARE_CMPLEF: //COMPARE Test case 6(CMPLEF): 8b10010011 == 8b10010010, result = 8b0 (False)
+      alu.alufn = 6b110111; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010010;
+      alu_output = alu.alu_output; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010010; 
+      seg.values = {b1101,b1101,b1101,b1011};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b0 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR_TEST;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b0 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        } 
+            
+          
+      state.COMPARE_ERROR_TEST: //COMPARE error test case: 8b10010011 == 8b10010011, result = 8b1(-1) 
+      alu.alufn = 6b110011; 
+      alu.a = 8b10010011;
+      alu.b = 8b10010011;
+      alu_output = alu.alu_output - 1; 
+      io_led[0] = 8b10010011;
+      io_led[1] = 8b10010011; 
+      seg.values = {b1101,b1101,b1101,b1011};            
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.NORMAL_MULTIPLICATION;
+        }  
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.COMPARE_ERROR;
+        }    
+         
+          
+      state.COMPARE_ERROR: //COMPARE ERROR
+      seg.values = {b1100,b1110,b1110,b1011};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY]==1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.NORMAL_MULTIPLICATION;}  
+      
+      state.NORMAL_MULTIPLICATION: // MULTICLIPATION Test case 1(MUL): 4*2 = 8
+      alu.alufn = 6b10; 
+      alu.a = 8b100;
+      alu.b = 8b10;
+      alu_output = alu.alu_output;
+      io_led[0] = 8b100;
+      io_led[1] = 8b10;
+      seg.values = {b1101,b1101,b1100,b0001};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1000 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.NEGATIVE_MULTIPLICATION;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1000 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.MULTIPLICATION_ERROR;
+          }
+        
+      state.NEGATIVE_MULTIPLICATION: // -VE MULTICLIPATION Test case 2(-VE MUL): -5*-5 = 25
+      alu.alufn = 6b10; 
+      alu.a = 8b11111011;
+      alu.b = 8b11111011;
+      alu_output = alu.alu_output;
+      io_led[0] = 8b11111011;
+      io_led[1] = 8b11111011;
+      seg.values = {b1101,b1101,b1100,b0001};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b00011001 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.MULTIPLICATION_ERROR_TEST;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b000111001 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.MULTIPLICATION_ERROR;
+          }  
+      
+      state.MULTIPLICATION_ERROR_TEST: // MULTICLIPATION_ERROR Test case (MUL): 4*2 = 8 (+1)
+      alu.alufn = 6b10; 
+      alu.a = 8b100;
+      alu.b = 8b10;
+      alu_output = alu.alu_output + 1;
+      io_led[0] = 8b100;
+      io_led[1] = 8b10;
+      seg.values = {b1101,b1101,b1100,b0001};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b1000 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.MODULO;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b1000 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.MULTIPLICATION_ERROR;
+          }  
+      
+      state.MULTIPLICATION_ERROR: //MULTIPLICATION ERROR
+      seg.values = {b1100,b1110,b1100,b0001};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY]==1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.MODULO;} 
+          
+      state.MODULO: // Modulo Test case 1(MUL): 8%3 = 2
+      alu.alufn = 6b10; 
+      alu.a = 8b1000;
+      alu.b = 8b11;
+      alu_output = alu.alu_output ;
+      io_led[0] = 8b1000;
+      io_led[1] = 8b11;
+      seg.values = {b1101,b1101,b1100,b0010};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY] == 1 && alu_output == 8b10 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.END;
+          }
+        else if (counter.q[DELAY] == 1 && alu_output != 8b10 && io_button[4] == 1){
+          counter.d=0;
+          state.d=state.MODULO_ERROR;
+          }
+         
+      state.MODULO_ERROR: //MODULO ERROR
+      seg.values = {b1100,b1110,b1100,b0010};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY]==1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.END;}
+              
+      state.END: //Finish testing
+      seg.values = {b1100,b1111,b0000,b1101};
+      counter.d = counter.q+1;
+        if (counter.q[DELAY]==1 && io_button[4] == 1){
+          counter.d = 0;
+          state.d = state.IDLE;} //return to IDLE state   
+  }
+  } 
+}
