@@ -1,0 +1,30 @@
+module compare_mod ( //performs CMPEQ, CMPLT and CMPLE functions
+    //inputs from the ALU and ADDER
+    input alufn[6], 
+    input z, 
+    input sub_overflow, 
+    input n,
+    
+    //outputs to the ALU
+    output cmp_output[8] 
+  ) {
+  
+sig cmp; 
+  
+  always {
+  
+    case(alufn[2:1]){ //values of alufn that defines the comparator function to use
+    b01:
+      cmp = z; //CMPEQ
+    b10:
+      cmp = n^sub_overflow; //CMPLT
+    b11:
+      cmp = z | (n^sub_overflow); //CMPLE
+    default:
+      cmp = b0;
+  }
+    cmp_output[0]=cmp; // least significant bit of cmp 
+    cmp_output[7:1] = 7b0; // other 7 bits are not used thus set to 0
+
+}
+}
