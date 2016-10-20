@@ -1,0 +1,63 @@
+module alu_mod (
+    //inputs
+    input alufn[6],
+    input a[8],
+    input b[8],
+    
+    //outputs
+    output sub_overflow,
+    output z,
+    output v,
+    output n,
+    output alu_output[8]
+  ) {
+ 
+//linking/constructing the modules of the ALU
+  adder_mod adder;
+  compare_mod compare;
+  boolean_mod boolean;
+  shifter_mod shifter;
+  
+  always {
+    //assign inputs to adder module
+    adder.a = a;
+    adder.b = b;
+    adder.alufn = alufn;
+    
+    //assign inputs to compare module
+    compare.z = adder.z;
+    compare.sub_overflow = adder.sub_overflow;
+    compare.n = adder.n;
+    compare.alufn = alufn;
+    
+    //assign inputs to boolean module
+    boolean.a = a;
+    boolean.b = b;
+    boolean.alufn = alufn;
+    
+    //assign inputs to shifter module
+    shifter.a =a;
+    shifter.b =b;
+    shifter.alufn = alufn;
+    
+    //assign outputs to the other signals
+    sub_overflow = adder.sub_overflow; //subtraction overflow signal
+    z = adder.z; //zero signal
+    v = adder.v; //addition overflow signal
+    n = adder.n; //carry signal
+    
+    //input of the last 2 bits of alufn to determine which module to use
+    case(alufn[5:4]){
+       b00:
+       alu_output = adder.sum_output; // adder module
+       b01:
+       alu_output = boolean.boole_output; // boolean module
+       b10:
+       alu_output = shifter.shift_output; // shifter module
+       b11:
+       alu_output = compare.cmp_output; // compare module
+       default:
+       alu_output = 8b0;
+    }
+  }
+}
