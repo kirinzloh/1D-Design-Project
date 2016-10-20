@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<ProcessHandle Version="1" Minor="0">
+    <Process Command="bitgen" Owner="weiqu" Host="DESKTOP-8DJ141S" Pid="8828">
+    </Process>
+</ProcessHandle>

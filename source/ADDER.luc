@@ -1,0 +1,44 @@
+module adder_mod ( //performs addition,subtraction,multiplication and modulo functions
+    //inputs from the ALU
+    input alufn[6],
+    input a[8],  
+    input b[8],  
+    
+    //outputs to the ALU   
+    output sum_output[8],
+    output z,  //zero signal
+    output v,  //addition overflow
+    output n,  //carry
+    output sub_overflow //to show subtraction overflow
+  ) {
+  
+sig sum[9]; //9-bit output
+sig sub_sum[9]; //subtraction sum used to calculate z,v,n
+  
+  always {
+    
+    case(alufn[1:0]){ //using alufn value to decide operation 
+    b00:
+      sub_sum = a-b;
+      sum = a+b; //addition
+    b01:
+      sub_sum = a-b;
+      sum = a-b; //subtraction
+    b10:
+      sub_sum = a-b;
+      sum = a*b; // multiplication
+    b11:
+      sub_sum = a-b;
+      sum = a-(a/b*b); // modulo
+    default:
+      sub_sum=a-b;
+      sum = a+b;
+  }
+    //assigning values to outputs
+    sum_output = sum[7:0]; 
+    sub_overflow = (a[7] & ~b[7] & (~sub_sum[7])) | ((~a[7])&(b[7])&sub_sum[7]);
+    v = (a[7] & b[7] & (~sum[7])) | ((~a[7])&(~b[7])&sum[7]);
+    n = sub_sum[7];
+    z = ~|sub_sum;
+}
+}
